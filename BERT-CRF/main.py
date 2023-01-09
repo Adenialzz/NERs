@@ -16,8 +16,9 @@ from tqdm import tqdm
 BATCH_SIZE = 64
 LR = 0.01
 EPOCHS = 10
-MODEL_NAME = 'bert-base-uncased'
-DEVICE = 'cpu'
+# MODEL_NAME = 'bert-base-uncased'
+MODEL_NAME = 'roberta'
+DEVICE = 'cuda'
 
 def train(e, model, dataloader, optimizer, scheduler, device):
     model.train()
@@ -48,22 +49,24 @@ def validate(e, model, data_loader, device):
     step = 0
     print('validating...')
     with torch.no_grad():
-        for batch in data_loader:
+        for batch in tqdm(data_loader):
             step += 1
-            sentences, labels, masks = batch
 
+            sentences, labels, masks = batch
             sentences = sentences.to(device)
             labels = labels.to(device)
             masks = masks.to(device)
+
             y_hat = model(sentences, labels, masks, is_test=True)
+
             loss = model(sentences, labels, masks)
             losses += loss.item()
 
             for j in y_hat:
-                Y_hat.append(j)
+                Y_hat.extend(j)
 
-            mask = (z == 1)
-            y_orig = torch.masked_select(y, mask)
+            valid = (masks == 1)
+            y_orig = torch.masked_select(labels, valid)
             Y.append(y_orig.cpu())
         Y = torch.cat(Y, dim=0).numpy()
         Y_hat = np.array(Y_hat)
@@ -76,7 +79,7 @@ def test(model, data_loader, device):
     print('testing...')
     Y, Y_hat = [], []
     with torch.no_grad():
-        for batch in data_loader:
+        for batch in tqdm(data_loader):
             sentences, labels, masks = batch
             sentences = sentences.to(device)
             labels = labels.to(device)
@@ -86,8 +89,8 @@ def test(model, data_loader, device):
             for j in y_hat:
                 Y_hat.extend(j)
             
-            mask = (z == 1).cpu()
-            y_orig = torch.masked_select(y, mask)
+            mask = (masks == 1).cpu()
+            y_orig = torch.masked_select(labels, mask)
             Y.append(y_orig)
         Y = torch.cat(Y, dim=0).numpy()
         return Y, Y_hat
@@ -98,10 +101,10 @@ if __name__ == '__main__':
     train_set = NerDataset('conll/train.txt', tag2idx, model_name=MODEL_NAME)
     train_loader = DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=10, collate_fn=PadBatch)
     valid_set = NerDataset('conll/valid.txt', tag2idx, model_name=MODEL_NAME)
-    valid_loader = DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=10, collate_fn=PadBatch)
+    valid_loader = DataLoader(dataset=valid_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=10, collate_fn=PadBatch)
     test_set = NerDataset('conll/test.txt', tag2idx, model_name=MODEL_NAME)
-    test_loader = DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=10, collate_fn=PadBatch)
-    model = Bert_CRF(n_classes=len(train_set.labels), model_name=MODEL_NAME)
+    test_loader = DataLoader(dataset=test_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=10, collate_fn=PadBatch)
+    model = Bert_CRF(n_classes=len(idx2tag), model_name=MODEL_NAME)
 
     optimizer  = AdamW(model.parameters(), lr=LR, eps=1e-6)
     total_steps = (len(train_set) // BATCH_SIZE) * EPOCHS if len(train_set) % BATCH_SIZE == 0 else (len(train_set) // BATCH_SIZE + 1) * EPOCHS
