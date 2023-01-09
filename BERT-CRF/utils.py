@@ -4,8 +4,8 @@ from transformers import BertTokenizer
 import pandas as pd
 
 class NerDataset(Dataset):
-    def __init__(self, f_path, model_name='bert-base-uncased', inference_df=None):
-        self._get_all_labels()
+    def __init__(self, f_path, tag2idx, model_name='bert-base-uncased', inference_df=None):
+        self.tag2idx = tag2idx
         self.sents = []
         self.tags_li = []
         self.max_len = 256
@@ -40,17 +40,6 @@ class NerDataset(Dataset):
                 self.tags_li.append(['[CLS]'] + tag + ['[SEP]']) 
             word, tag = [], []
 
-    def _get_all_labels(self):
-        ner_type = pd.read_csv('conll/bio_type.txt', sep=' ')
-        ners = ner_type['postfix'].to_list()
-        self.labels = []
-        for n in ners:
-            self.labels.extend(["B-" + n, "I-" + n])
-        self.labels.extend(['<PAD>', '[CLS]', '[SEP]', 'O'])
-        
-        self.tag2idx = {tag: idx for idx, tag in enumerate(self.labels)}
-        self.idx2tag = {idx: tag for idx, tag in enumerate(self.labels)}
-        print(f'all type len is {len(self.labels)}')
 
     def __getitem__(self, idx):
         words, tags = self.sents[idx], self.tags_li[idx]
@@ -69,3 +58,15 @@ def PadBatch(batch):
     mask = (token_tensors > 0)
     return token_tensors, label_tensors, mask
 
+def get_all_labels():
+    ner_type = pd.read_csv('conll/bio_type.txt', sep=' ')
+    ners = ner_type['postfix'].to_list()
+    labels = []
+    for n in ners:
+        labels.extend(["B-" + n, "I-" + n])
+    labels.extend(['<PAD>', '[CLS]', '[SEP]', 'O'])
+    
+    tag2idx = {tag: idx for idx, tag in enumerate(labels)}
+    idx2tag = {idx: tag for idx, tag in enumerate(labels)}
+    print(f'all type len is {len(labels)}')
+    return tag2idx, idx2tag
