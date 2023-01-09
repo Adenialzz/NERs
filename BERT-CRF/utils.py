@@ -14,12 +14,13 @@ class NerDataset(Dataset):
             data = inference_df
         else:
             data = pd.read_csv(f_path, sep=' ')
+        data.fillna(value='O', inplace=True)
 
         tags = data['O'].to_list()
         words = data['-DOCSTART-'].to_list()
         word, tag = [], []
         for char, t in zip(words, tags):
-            if char != '。':
+            if char != '.':
                 word.append(char)
                 tag.append(t)
             else:
@@ -62,7 +63,6 @@ class NerDataset(Dataset):
         return len(self.sents)
 
 def PadBatch(batch):
-    import pdb; pdb.set_trace()
     maxlen = max(i[2] for i in batch)
     token_tensors = torch.LongTensor([i[0] + [0] * (maxlen - len(i[1])) for i in batch])
     label_tensors = torch.LongTensor([i[1] + [0] * (maxlen - len(i[1])) for i in batch])

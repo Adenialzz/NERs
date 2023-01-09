@@ -11,17 +11,21 @@ from transformers import AdamW, get_linear_schedule_with_warmup
 import pandas as pd
 from models import Bert_CRF
 from utils import NerDataset, PadBatch
+from tqdm import tqdm
 
-BATCH_SIZE = 8
+BATCH_SIZE = 64
 LR = 0.01
 EPOCHS = 10
 MODEL_NAME = 'bert-base-uncased'
+DEVICE = 'cuda'
 
 def train(e, model, dataloader, optimizer, scheduler, device):
     model.train()
+    model = model.to(device)
     losses = 0.0
     step = 0
-    for batch in dataloader:
+    print('training...')
+    for batch in tqdm(dataloader):
         step += 1
         sentences, labels, masks = batch
 
@@ -38,8 +42,8 @@ def train(e, model, dataloader, optimizer, scheduler, device):
     print(f'Epoch: {e}, Loss: {losses / step}')
 
 if __name__ == '__main__':
-    train_set = NerDataset('conll/valid.txt', model_name=MODEL_NAME)
-    train_loader = DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=0, collate_fn=PadBatch)
+    train_set = NerDataset('conll/train.txt', model_name=MODEL_NAME)
+    train_loader = DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=10, collate_fn=PadBatch)
     model = Bert_CRF(n_classes=len(train_set.labels), model_name=MODEL_NAME)
 
     optimizer  = AdamW(model.parameters(), lr=LR, eps=1e-6)
@@ -49,6 +53,6 @@ if __name__ == '__main__':
     criterion = nn.CrossEntropyLoss(ignore_index=0)
 
     for e in range(EPOCHS):
-        train(e, model, train_loader, optimizer, scheduler, 'cpu')
+        train(e, model, train_loader, optimizer, scheduler, DEVICE)
 
 
