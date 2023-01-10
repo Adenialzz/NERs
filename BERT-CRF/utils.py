@@ -53,7 +53,7 @@ class NerDataset(Dataset):
 def PadBatch(batch):
     maxlen = max(i[2] for i in batch)
     token_tensors = torch.LongTensor([i[0] + [0] * (maxlen - len(i[1])) for i in batch])
-    label_tensors = torch.LongTensor([i[1] + [0] * (maxlen - len(i[1])) for i in batch])
+    label_tensors = torch.LongTensor([i[1] + [9] * (maxlen - len(i[1])) for i in batch])
     mask = (token_tensors > 0)
     return token_tensors, label_tensors, mask
 

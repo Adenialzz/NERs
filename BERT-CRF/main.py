@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import numpy as np
+import argparse
 from tqdm import tqdm
 from seqeval.metrics import f1_score, precision_score, recall_score
 from sklearn import metrics
@@ -11,11 +12,16 @@ import pandas as pd
 from models import Bert_CRF
 from utils import NerDataset, PadBatch, get_all_labels
 
-BATCH_SIZE = 3
-LR = 0.01
-EPOCHS = 10
-MODEL_NAME = 'bert-base-uncased'
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--batch_size', type=int, default=128)
+    parser.add_argument('--lr', type=float, default=0.005)
+    parser.add_argument('--device', type=str, default='cuda')
+    parser.add_argument('--model_name', type=str, default='bert-base-uncased')
+    parser.add_argument('--use_crf', action='store_true')
+    cfg = parser.parse_args()
+    return cfg
 
 def train(e, model, dataloader, optimizer, scheduler, device):
     model.train()
@@ -37,15 +43,15 @@ def train(e, model, dataloader, optimizer, scheduler, device):
         optimizer.step()
         scheduler.step()
         optimizer.zero_grad()
-        break
+        # break
     print(f'Epoch: {e}, Loss: {losses / step}')
 
 def validate(e, model, data_loader, device, idx2tag):
     model.eval()
-    Y, Y_hat = [], []
     losses = 0
     step = 0
     print('validating...')
+    all_pred_tags, all_label_tags = [], []
     with torch.no_grad():
         for batch in tqdm(data_loader):
             step += 1
@@ -57,89 +63,59 @@ def validate(e, model, data_loader, device, idx2tag):
 
             y_hat = model(sentences, masks)
 
-            print(eval_metrics(labels, y_hat, idx2tag))
-
             loss = model(sentences, masks, labels)
             losses += loss.item()
 
-            for j in y_hat:
-                Y_hat.extend(j)
+            # print(f'labels: {labels[0]}')
+            # print(f'preds: {y_hat[0]}')
+            labels_tag, preds_tag = convert_idx_to_tag(labels, y_hat, idx2tag)
+            all_label_tags.extend(labels_tag)
+            all_pred_tags.extend(preds_tag)
 
-            valid = (masks == 1)
-            y_orig = torch.masked_select(labels, valid)
-            Y.append(y_orig.cpu())
-        Y = torch.cat(Y, dim=0).numpy()
-        Y_hat = np.array(Y_hat)
-        acc = (Y_hat == Y).mean() * 100
-        print(f"Epoch: {e}, Val Loss: {losses/step:.3f}, Val Acc: {acc}")
-        return model, losses/step, acc
+        f1 = f1_score(all_label_tags, all_pred_tags)
+        print(f"Epoch: {e}, Val Loss: {losses/step:.3f}, Val F1: {f1:.2f}")
+        return model, losses/step, f1
 
-def test(model, data_loader, device):
-    model.eval()
-    print('testing...')
-    Y, Y_hat = [], []
-    with torch.no_grad():
-        for batch in tqdm(data_loader):
-            sentences, labels, masks = batch
-            sentences = sentences.to(device)
-            labels = labels.to(device)
-            masks = masks.to(device)
-            y_hat = model(sentences, masks)
-            
-            for j in y_hat:
-                Y_hat.extend(j)
-            
-            mask = (masks == 1).cpu()
-            y_orig = torch.masked_select(labels, mask)
-            Y.append(y_orig)
-        Y = torch.cat(Y, dim=0).numpy()
-        return Y, Y_hat
-
-def eval_metrics(labels, preds, idx2tag):
-    labels = labels.cpu().numpy().tolist()
-    preds = preds.cpu().numpy().tolist()
-
-    labels_tag, preds_tag = convert_idx_to_tag(labels, preds, idx2tag)
-    f1 = f1_score(labels_tag, preds_tag)
-    return f1
 
 def convert_idx_to_tag(labels, preds, idx2tag):
-    special_token_set = {'<PAD>', '[CLS]', '[SEP]'}
+    special_token_set = {9, 10, 11} # {'<PAD>', '[CLS]', '[SEP]'}
+
+    labels = labels.cpu().numpy().tolist()
+    if isinstance(preds, torch.Tensor):
+        preds = preds.cpu().numpy().tolist()
     labels_tag, preds_tag = [], []
     for label_sent, pred_sent in zip(labels, preds):
+        label_tag_sent, pred_tag_sent = [], []
         for label, pred in zip(label_sent, pred_sent):
             if label in special_token_set:
                 continue
-            labels_tag.append(idx2tag[label])
-            preds_tag.append(idx2tag[pred])
+            label_tag_sent.append(idx2tag[label])
+            pred_tag_sent.append(idx2tag[pred])
+        labels_tag.append(label_tag_sent)
+        preds_tag.append(pred_tag_sent)
     return labels_tag, preds_tag
-            
 
-
-if __name__ == '__main__':
-    tokenizer = BertTokenizer.from_pretrained(MODEL_NAME)
+def main(cfg):
+    tokenizer = BertTokenizer.from_pretrained(cfg.model_name)
     tag2idx, idx2tag = get_all_labels('conll/bio_type.txt')
-    print(idx2tag)
-    train_set = NerDataset('conll/valid.txt', tag2idx, tokenizer)
-    train_loader = DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=10, collate_fn=PadBatch)
+    train_set = NerDataset('conll/train.txt', tag2idx, tokenizer)
+    train_loader = DataLoader(dataset=train_set, batch_size=cfg.batch_size, shuffle=True, num_workers=10, collate_fn=PadBatch)
     valid_set = NerDataset('conll/valid.txt', tag2idx, tokenizer)
-    valid_loader = DataLoader(dataset=valid_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=10, collate_fn=PadBatch)
+    valid_loader = DataLoader(dataset=valid_set, batch_size=cfg.batch_size, shuffle=True, num_workers=10, collate_fn=PadBatch)
     test_set = NerDataset('conll/test.txt', tag2idx, tokenizer)
-    test_loader = DataLoader(dataset=test_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=10, collate_fn=PadBatch)
-    model = Bert_CRF(n_classes=len(idx2tag), model_name=MODEL_NAME)
+    test_loader = DataLoader(dataset=test_set, batch_size=cfg.batch_size, shuffle=True, num_workers=10, collate_fn=PadBatch)
+    model = Bert_CRF(n_classes=len(idx2tag), model_name=cfg.model_name, use_crf=cfg.use_crf)
 
-    optimizer  = AdamW(model.parameters(), lr=LR, eps=1e-6)
-    total_steps = (len(train_set) // BATCH_SIZE) * EPOCHS if len(train_set) % BATCH_SIZE == 0 else (len(train_set) // BATCH_SIZE + 1) * EPOCHS
+    optimizer  = AdamW(model.parameters(), lr=cfg.lr, eps=1e-6)
+    total_steps = (len(train_set) // cfg.batch_size) * cfg.epochs if len(train_set) % cfg.batch_size == 0 else (len(train_set) // cfg.batch_size + 1) * cfg.epochs
     warm_up_ratio = 0.1 # Define 10% steps
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps = warm_up_ratio * total_steps, num_training_steps = total_steps)
-    criterion = nn.CrossEntropyLoss(ignore_index=0)
 
-    for e in range(EPOCHS):
-        train(e, model, train_loader, optimizer, scheduler, DEVICE)
-        cand_mdoel, loss, acc = validate(e, model, valid_loader, DEVICE, idx2tag)
+    for e in range(cfg.epochs):
+        train(e, model, train_loader, optimizer, scheduler, cfg.device)
+        cand_mdoel, loss, acc = validate(e, model, valid_loader, cfg.device, idx2tag)
 
-    Y, Y_hat = test(model, test_loader, DEVICE)
-    y_true = [idx2tag[i] for i in Y]
-    y_pred = [idx2tag[i] for i in Y_hat]
-
-
+            
+if __name__ == '__main__':
+    cfg = parse_args()
+    main(cfg)

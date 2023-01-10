@@ -38,7 +38,7 @@ class Bert_CRF(nn.Module):
         else:
             if self.use_crf:
                 result = self.crf.decode(logits, mask)
-                return result
             else:
-                return torch.argmax(logits, dim=-1)
+                result = torch.argmax(logits, dim=-1)
+            return result
 
