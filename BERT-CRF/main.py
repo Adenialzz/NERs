@@ -2,23 +2,20 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-import os
-import warnings
-import argparse
 import numpy as np
+from tqdm import tqdm
+from seqeval.metrics import f1_score, precision_score, recall_score
 from sklearn import metrics
-from transformers import AdamW, get_linear_schedule_with_warmup
+from transformers import AdamW, get_linear_schedule_with_warmup, BertTokenizer
 import pandas as pd
 from models import Bert_CRF
 from utils import NerDataset, PadBatch, get_all_labels
-from tqdm import tqdm
 
-BATCH_SIZE = 64
+BATCH_SIZE = 3
 LR = 0.01
 EPOCHS = 10
-# MODEL_NAME = 'bert-base-uncased'
-MODEL_NAME = 'roberta'
-DEVICE = 'cuda'
+MODEL_NAME = 'bert-base-uncased'
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def train(e, model, dataloader, optimizer, scheduler, device):
     model.train()
@@ -33,16 +30,17 @@ def train(e, model, dataloader, optimizer, scheduler, device):
         sentences = sentences.to(device)
         labels = labels.to(device)
         masks = masks.to(device)
-        loss = model(sentences, labels, masks)
+        loss = model(sentences, masks, labels)
 
         losses += loss.item()
         loss.backward()
         optimizer.step()
         scheduler.step()
         optimizer.zero_grad()
+        break
     print(f'Epoch: {e}, Loss: {losses / step}')
 
-def validate(e, model, data_loader, device):
+def validate(e, model, data_loader, device, idx2tag):
     model.eval()
     Y, Y_hat = [], []
     losses = 0
@@ -57,9 +55,11 @@ def validate(e, model, data_loader, device):
             labels = labels.to(device)
             masks = masks.to(device)
 
-            y_hat = model(sentences, labels, masks, is_test=True)
+            y_hat = model(sentences, masks)
 
-            loss = model(sentences, labels, masks)
+            print(eval_metrics(labels, y_hat, idx2tag))
+
+            loss = model(sentences, masks, labels)
             losses += loss.item()
 
             for j in y_hat:
@@ -84,7 +84,7 @@ def test(model, data_loader, device):
             sentences = sentences.to(device)
             labels = labels.to(device)
             masks = masks.to(device)
-            y_hat = model(sentences, labels, masks, is_test=True)
+            y_hat = model(sentences, masks)
             
             for j in y_hat:
                 Y_hat.extend(j)
@@ -95,14 +95,36 @@ def test(model, data_loader, device):
         Y = torch.cat(Y, dim=0).numpy()
         return Y, Y_hat
 
+def eval_metrics(labels, preds, idx2tag):
+    labels = labels.cpu().numpy().tolist()
+    preds = preds.cpu().numpy().tolist()
+
+    labels_tag, preds_tag = convert_idx_to_tag(labels, preds, idx2tag)
+    f1 = f1_score(labels_tag, preds_tag)
+    return f1
+
+def convert_idx_to_tag(labels, preds, idx2tag):
+    special_token_set = {'<PAD>', '[CLS]', '[SEP]'}
+    labels_tag, preds_tag = [], []
+    for label_sent, pred_sent in zip(labels, preds):
+        for label, pred in zip(label_sent, pred_sent):
+            if label in special_token_set:
+                continue
+            labels_tag.append(idx2tag[label])
+            preds_tag.append(idx2tag[pred])
+    return labels_tag, preds_tag
+            
+
 
 if __name__ == '__main__':
-    tag2idx, idx2tag = get_all_labels()
-    train_set = NerDataset('conll/train.txt', tag2idx, model_name=MODEL_NAME)
+    tokenizer = BertTokenizer.from_pretrained(MODEL_NAME)
+    tag2idx, idx2tag = get_all_labels('conll/bio_type.txt')
+    print(idx2tag)
+    train_set = NerDataset('conll/valid.txt', tag2idx, tokenizer)
     train_loader = DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=10, collate_fn=PadBatch)
-    valid_set = NerDataset('conll/valid.txt', tag2idx, model_name=MODEL_NAME)
+    valid_set = NerDataset('conll/valid.txt', tag2idx, tokenizer)
     valid_loader = DataLoader(dataset=valid_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=10, collate_fn=PadBatch)
-    test_set = NerDataset('conll/test.txt', tag2idx, model_name=MODEL_NAME)
+    test_set = NerDataset('conll/test.txt', tag2idx, tokenizer)
     test_loader = DataLoader(dataset=test_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=10, collate_fn=PadBatch)
     model = Bert_CRF(n_classes=len(idx2tag), model_name=MODEL_NAME)
 
@@ -114,24 +136,10 @@ if __name__ == '__main__':
 
     for e in range(EPOCHS):
         train(e, model, train_loader, optimizer, scheduler, DEVICE)
-        cand_mdoel, loss, acc = validate(e, model, valid_loader, DEVICE)
+        cand_mdoel, loss, acc = validate(e, model, valid_loader, DEVICE, idx2tag)
 
     Y, Y_hat = test(model, test_loader, DEVICE)
     y_true = [idx2tag[i] for i in Y]
     y_pred = [idx2tag[i] for i in Y_hat]
-
-    print(metrics.classification_report(y_true, y_pred, labels=list(tag2idx.keys()), digits=3))
-    # torch.save(best_model.state_dict(), "checkpoint/0704_ner.pt")
-    test_data = pd.read_csv("to_res.csv")
-    y_test_useful = []
-    y_pred_useful = []
-    for a, b in zip(y_true, y_pred):
-        if a not in ['[CLS]', '[SEP]']:
-            y_test_useful.append(a)
-            y_pred_useful.append(b)
-    test_data["labeled"] = y_test_useful
-    test_data["pred"] = y_pred_useful
-    test_data.to_csv("result.csv", index=False)
-
 
 

@@ -1,15 +1,14 @@
 import torch
 from torch.utils.data import Dataset
-from transformers import BertTokenizer
 import pandas as pd
 
 class NerDataset(Dataset):
-    def __init__(self, f_path, tag2idx, model_name='bert-base-uncased', inference_df=None):
+    def __init__(self, f_path, tag2idx, tokenizer, inference_df=None):
         self.tag2idx = tag2idx
         self.sents = []
         self.tags_li = []
         self.max_len = 256
-        self.tokenizer = BertTokenizer.from_pretrained(model_name)
+        self.tokenizer = tokenizer
         if inference_df is not None:
             data = inference_df
         else:
@@ -58,13 +57,14 @@ def PadBatch(batch):
     mask = (token_tensors > 0)
     return token_tensors, label_tensors, mask
 
-def get_all_labels():
-    ner_type = pd.read_csv('conll/bio_type.txt', sep=' ')
+def get_all_labels(filename):
+    ner_type = pd.read_csv(filename, sep=' ')
     ners = ner_type['postfix'].to_list()
     labels = []
     for n in ners:
         labels.extend(["B-" + n, "I-" + n])
-    labels.extend(['<PAD>', '[CLS]', '[SEP]', 'O'])
+    labels.append('O')
+    labels.extend(['<PAD>', '[CLS]', '[SEP]'])
     
     tag2idx = {tag: idx for idx, tag in enumerate(labels)}
     idx2tag = {idx: tag for idx, tag in enumerate(labels)}
