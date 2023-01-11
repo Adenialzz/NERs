@@ -4,16 +4,23 @@ from transformers import BertModel, BertConfig
 from torchcrf import CRF
 
 class Bert_CRF(nn.Module):
-    def __init__(self, n_classes, model_name='bert-base-uncased', embedding_dim=768, hidden_dim=256, use_crf=False):
+    def __init__(self, n_classes, model_name='bert-base-uncased', embedding_dim=768, lstm_hidden_dim=256, use_lstm=False, use_crf=False):
         super().__init__()
-        self.hidden_dim = hidden_dim
+        self.lstm_hidden_dim = lstm_hidden_dim
         self.embedding_dim = embedding_dim
+        self.use_lstm = use_lstm
+        self.use_crf = use_crf
+
         self.bert = BertModel.from_pretrained(model_name)
         for _, param in self.bert.named_parameters():
             param.requires_grad = False
-        self.use_crf = use_crf
+
+        if use_lstm:
+            self.lstm = nn.LSTM(embedding_dim, lstm_hidden_dim, batch_first=True, num_layers=2, bidirectional=False)
+
         self.dropout = nn.Dropout(p=0.1)
-        self.linear = nn.Linear(embedding_dim, n_classes)
+        self.linear = nn.Linear(lstm_hidden_dim if self.use_lstm else embedding_dim, n_classes)
+
         if self.use_crf:
             self.crf = CRF(n_classes, batch_first=True)
         else:
@@ -23,6 +30,8 @@ class Bert_CRF(nn.Module):
         with torch.no_grad():
             outputs = self.bert(sentence)
         enc = outputs.last_hidden_state
+        if self.use_lstm:
+            enc, (hn, vn) = self.lstm(enc)
         enc = self.dropout(enc)
         logits = self.linear(enc)
         return logits

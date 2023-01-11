@@ -19,6 +19,7 @@ def parse_args():
     parser.add_argument('--lr', type=float, default=0.005)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--model_name', type=str, default='bert-base-uncased')
+    parser.add_argument('--use_lstm', action='store_true')
     parser.add_argument('--use_crf', action='store_true')
     cfg = parser.parse_args()
     return cfg
@@ -104,7 +105,7 @@ def main(cfg):
     valid_loader = DataLoader(dataset=valid_set, batch_size=cfg.batch_size, shuffle=True, num_workers=10, collate_fn=PadBatch)
     test_set = NerDataset('conll/test.txt', tag2idx, tokenizer)
     test_loader = DataLoader(dataset=test_set, batch_size=cfg.batch_size, shuffle=True, num_workers=10, collate_fn=PadBatch)
-    model = Bert_CRF(n_classes=len(idx2tag), model_name=cfg.model_name, use_crf=cfg.use_crf)
+    model = Bert_CRF(n_classes=len(idx2tag), model_name=cfg.model_name, use_crf=cfg.use_crf, use_lstm=cfg.use_lstm)
 
     optimizer  = AdamW(model.parameters(), lr=cfg.lr, eps=1e-6)
     total_steps = (len(train_set) // cfg.batch_size) * cfg.epochs if len(train_set) % cfg.batch_size == 0 else (len(train_set) // cfg.batch_size + 1) * cfg.epochs
