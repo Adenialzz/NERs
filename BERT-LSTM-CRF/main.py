@@ -7,8 +7,10 @@ import os.path as osp
 from seqeval.metrics import f1_score as cal_f1_seqeval
 from sklearn.metrics import f1_score as cal_f1_sklearn
 from transformers import get_linear_schedule_with_warmup, BertTokenizer
+
 from models import Bert_CRF
-from utils import NerDataset, PadBatch, get_all_labels, get_zh_labels
+from dataset import NerDataset, PadBatch, get_all_labels
+from utils import demask
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -18,7 +20,7 @@ def parse_args():
     parser.add_argument('--lr', type=float, default=0.005)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--model_name', type=str, default='bert-base-uncased')
-    parser.add_argument('--data_root', type=str, default='data/conll2003/')
+    parser.add_argument('--dset_name', type=str, default='conll2003', choices=['conll2003', 'cner'])
     parser.add_argument('--use_lstm', action='store_true')
     parser.add_argument('--use_crf', action='store_true')
     cfg = parser.parse_args()
@@ -86,31 +88,18 @@ def validate(e, model, data_loader, device, idx2tag):
 
         print(f"Epoch: {e}, Val Loss: {losses/step:.3f}, Val F1(seqeval, sklearn): {f1_seqeval:.2f}, {f1_sklearn:.2f}")
 
-
-def demask(mask, labels, preds):
-    labels_ll, preds_ll = [], []
-    for i, sent_mask in enumerate(mask):
-        labels_sent, preds_sent = [], []
-        for j, word_mask in enumerate(sent_mask):
-            if word_mask == 0:
-                continue
-            labels_sent.append(labels[i][j].item())
-            preds_sent.append(preds[i][j].item())
-        labels_ll.append(labels_sent)
-        preds_ll.append(preds_sent)
-    return labels_ll, preds_ll
-
-
 def main(cfg):
     tokenizer = BertTokenizer.from_pretrained(cfg.model_name)
-    # tag2idx, idx2tag = get_all_labels('data/conll/bio_type.txt')
-    tag2idx, idx2tag = get_zh_labels()
-    train_set = NerDataset(osp.join(cfg.data_root, 'train.txt'), tag2idx, tokenizer)
+    tag2idx, idx2tag = get_all_labels(cfg.dset_name)
+
+    data_root = osp.join('data', cfg.dset_name)
+    train_set = NerDataset(osp.join(data_root, 'train.txt'), tag2idx, tokenizer)
     train_loader = DataLoader(dataset=train_set, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers, collate_fn=PadBatch)
-    valid_set = NerDataset(osp.join(cfg.data_root, 'valid.txt'), tag2idx, tokenizer)
+    valid_set = NerDataset(osp.join(data_root, 'valid.txt'), tag2idx, tokenizer)
     valid_loader = DataLoader(dataset=valid_set, batch_size=cfg.batch_size, shuffle=False, num_workers=cfg.num_workers, collate_fn=PadBatch)
-    test_set = NerDataset(osp.join(cfg.data_root, 'test.txt'), tag2idx, tokenizer)
+    test_set = NerDataset(osp.join(data_root, 'test.txt'), tag2idx, tokenizer)
     test_loader = DataLoader(dataset=test_set, batch_size=cfg.batch_size, shuffle=False, num_workers=cfg.num_workers, collate_fn=PadBatch)
+
     model = Bert_CRF(n_classes=len(idx2tag), model_name=cfg.model_name, use_crf=cfg.use_crf, use_lstm=cfg.use_lstm)
 
     optimizer  = AdamW(model.parameters(), lr=cfg.lr, eps=1e-6)

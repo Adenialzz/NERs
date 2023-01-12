@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from transformers import BertModel, BertConfig
+from transformers import BertModel
 from torchcrf import CRF
 
 class Bert_CRF(nn.Module):
