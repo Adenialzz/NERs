@@ -1,12 +1,13 @@
 import torch
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
+import numpy as np
 import argparse
 from tqdm import tqdm
 import os
 import os.path as osp
-from seqeval.metrics import f1_score, precision_score, recall_score
-from sklearn.metrics import f1_score as f1_score_sklearn
+from seqeval.metrics import f1_score as cal_f1_seqeval
+from sklearn.metrics import f1_score as cal_f1_sklearn
 from transformers import get_linear_schedule_with_warmup, BertTokenizer
 from models import Bert_CRF
 from utils import NerDataset, PadBatch, get_all_labels
@@ -46,7 +47,7 @@ def train(e, model, dataloader, optimizer, scheduler, device):
         scheduler.step()
         optimizer.zero_grad()
         # break
-    print(f'Epoch: {e}, Loss: {losses / step}')
+    print(f'Epoch: {e}, Loss: {losses / step:.3f}')
 
 def validate(e, model, data_loader, device, idx2tag):
     model.eval()
@@ -54,6 +55,7 @@ def validate(e, model, data_loader, device, idx2tag):
     step = 0
     print('validating...')
     all_pred_tags, all_label_tags = [], []
+    all_preds, all_labels = [], []
     with torch.no_grad():
         for batch in tqdm(data_loader):
             step += 1
@@ -68,34 +70,38 @@ def validate(e, model, data_loader, device, idx2tag):
             loss = model(sentences, masks, labels)
             losses += loss.item()
 
-            # print(f'labels: {labels[0]}')
-            # print(f'preds: {y_hat[0]}')
-            labels_tag, preds_tag = convert_idx_to_tag(labels, y_hat, idx2tag)
-            all_label_tags.extend(labels_tag)
-            all_pred_tags.extend(preds_tag)
+            if isinstance(y_hat, torch.Tensor):
+                labels_ll, preds_ll = demask(masks, labels, y_hat)
+            else:
+                labels_ll, _ = demask(masks, labels, labels)
+                preds_ll = y_hat
+            all_labels.extend(labels_ll)
+            all_preds.extend(preds_ll)
 
-        f1 = f1_score(all_label_tags, all_pred_tags)
-        f1_sklearn = f1_score_sklearn(all_label_tags, all_pred_tags, average='micro')
-        print(f"Epoch: {e}, Val Loss: {losses/step:.3f}, Val F1: {f1:.2f}, {f1_sklearn:.2f}")
-        return model, losses/step, f1
+        all_pred_tags = [[idx2tag[idx] for idx in sent] for sent in all_preds]
+        all_label_tags = [[idx2tag[idx] for idx in sent] for sent in all_labels]
+
+        # for seqeval f1 calculating  [ [O, O, B-X, I-X, ...], [O, O, ...] ]  List[ List[ str]]
+        f1_seqeval = cal_f1_seqeval(all_label_tags, all_pred_tags)
+        # for sklearn f1 calculating  [ 1, 3, 2, 5, ... ] List[ int]
+        f1_sklearn = cal_f1_sklearn([item for sent in all_labels for item in sent], [item for sent in all_preds for item in sent], labels=range(1, len(idx2tag)), average='weighted')
+
+        print(f"Epoch: {e}, Val Loss: {losses/step:.3f}, Val F1(seqeval, sklearn): {f1_seqeval:.2f}, {f1_sklearn:.2f}")
 
 
-def convert_idx_to_tag(labels, preds, idx2tag):
-
-    labels = labels.cpu().numpy().tolist()
-    if isinstance(preds, torch.Tensor):
-        preds = preds.cpu().numpy().tolist()
-    labels_tag, preds_tag = [], []
-    for label_sent, pred_sent in zip(labels, preds):
-        label_tag_sent, pred_tag_sent = [], []
-        for label, pred in zip(label_sent, pred_sent):
-            if label == 0: # <PAD>
+def demask(mask, labels, preds):
+    labels_ll, preds_ll = [], []
+    for i, sent_mask in enumerate(mask):
+        labels_sent, preds_sent = [], []
+        for j, word_mask in enumerate(sent_mask):
+            if word_mask == 0:
                 continue
-            label_tag_sent.append(idx2tag[label])
-            pred_tag_sent.append(idx2tag[pred])
-        labels_tag.append(label_tag_sent)
-        preds_tag.append(pred_tag_sent)
-    return labels_tag, preds_tag
+            labels_sent.append(labels[i][j].item())
+            preds_sent.append(preds[i][j].item())
+        labels_ll.append(labels_sent)
+        preds_ll.append(preds_sent)
+    return labels_ll, preds_ll
+
 
 def main(cfg):
     tokenizer = BertTokenizer.from_pretrained(cfg.model_name)
@@ -115,7 +121,7 @@ def main(cfg):
 
     for e in range(cfg.epochs):
         train(e, model, train_loader, optimizer, scheduler, cfg.device)
-        cand_mdoel, loss, acc = validate(e, model, valid_loader, cfg.device, idx2tag)
+        validate(e, model, valid_loader, cfg.device, idx2tag)
 
             
 if __name__ == '__main__':
