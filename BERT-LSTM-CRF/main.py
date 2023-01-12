@@ -1,14 +1,13 @@
 import torch
-import torch.nn as nn
-import torch.optim as optim
 from torch.utils.data import DataLoader
-import numpy as np
+from torch.optim import AdamW
 import argparse
 from tqdm import tqdm
+import os
+import os.path as osp
 from seqeval.metrics import f1_score, precision_score, recall_score
-from sklearn import metrics
-from transformers import AdamW, get_linear_schedule_with_warmup, BertTokenizer
-import pandas as pd
+from sklearn.metrics import f1_score as f1_score_sklearn
+from transformers import get_linear_schedule_with_warmup, BertTokenizer
 from models import Bert_CRF
 from utils import NerDataset, PadBatch, get_all_labels
 
@@ -16,9 +15,11 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=128)
+    parser.add_argument('--num_workers', type=int, default=10)
     parser.add_argument('--lr', type=float, default=0.005)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--model_name', type=str, default='bert-base-uncased')
+    parser.add_argument('--data_root', type=str, default='data/conll2003/')
     parser.add_argument('--use_lstm', action='store_true')
     parser.add_argument('--use_crf', action='store_true')
     cfg = parser.parse_args()
@@ -74,12 +75,12 @@ def validate(e, model, data_loader, device, idx2tag):
             all_pred_tags.extend(preds_tag)
 
         f1 = f1_score(all_label_tags, all_pred_tags)
-        print(f"Epoch: {e}, Val Loss: {losses/step:.3f}, Val F1: {f1:.2f}")
+        f1_sklearn = f1_score_sklearn(all_label_tags, all_pred_tags, average='micro')
+        print(f"Epoch: {e}, Val Loss: {losses/step:.3f}, Val F1: {f1:.2f}, {f1_sklearn:.2f}")
         return model, losses/step, f1
 
 
 def convert_idx_to_tag(labels, preds, idx2tag):
-    special_token_set = {9, 10, 11} # {'<PAD>', '[CLS]', '[SEP]'}
 
     labels = labels.cpu().numpy().tolist()
     if isinstance(preds, torch.Tensor):
@@ -88,7 +89,7 @@ def convert_idx_to_tag(labels, preds, idx2tag):
     for label_sent, pred_sent in zip(labels, preds):
         label_tag_sent, pred_tag_sent = [], []
         for label, pred in zip(label_sent, pred_sent):
-            if label in special_token_set:
+            if label == 0: # <PAD>
                 continue
             label_tag_sent.append(idx2tag[label])
             pred_tag_sent.append(idx2tag[pred])
@@ -98,13 +99,13 @@ def convert_idx_to_tag(labels, preds, idx2tag):
 
 def main(cfg):
     tokenizer = BertTokenizer.from_pretrained(cfg.model_name)
-    tag2idx, idx2tag = get_all_labels('conll/bio_type.txt')
-    train_set = NerDataset('conll/train.txt', tag2idx, tokenizer)
-    train_loader = DataLoader(dataset=train_set, batch_size=cfg.batch_size, shuffle=True, num_workers=10, collate_fn=PadBatch)
-    valid_set = NerDataset('conll/valid.txt', tag2idx, tokenizer)
-    valid_loader = DataLoader(dataset=valid_set, batch_size=cfg.batch_size, shuffle=True, num_workers=10, collate_fn=PadBatch)
-    test_set = NerDataset('conll/test.txt', tag2idx, tokenizer)
-    test_loader = DataLoader(dataset=test_set, batch_size=cfg.batch_size, shuffle=True, num_workers=10, collate_fn=PadBatch)
+    tag2idx, idx2tag = get_all_labels('data/conll/bio_type.txt')
+    train_set = NerDataset(osp.join(cfg.data_root, 'train.txt'), tag2idx, tokenizer)
+    train_loader = DataLoader(dataset=train_set, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers, collate_fn=PadBatch)
+    valid_set = NerDataset(osp.join(cfg.data_root, 'valid.txt'), tag2idx, tokenizer)
+    valid_loader = DataLoader(dataset=valid_set, batch_size=cfg.batch_size, shuffle=False, num_workers=cfg.num_workers, collate_fn=PadBatch)
+    test_set = NerDataset(osp.join(cfg.data_root, 'test.txt'), tag2idx, tokenizer)
+    test_loader = DataLoader(dataset=test_set, batch_size=cfg.batch_size, shuffle=False, num_workers=cfg.num_workers, collate_fn=PadBatch)
     model = Bert_CRF(n_classes=len(idx2tag), model_name=cfg.model_name, use_crf=cfg.use_crf, use_lstm=cfg.use_lstm)
 
     optimizer  = AdamW(model.parameters(), lr=cfg.lr, eps=1e-6)
