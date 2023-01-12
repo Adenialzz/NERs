@@ -1,16 +1,14 @@
 import torch
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
-import numpy as np
 import argparse
 from tqdm import tqdm
-import os
 import os.path as osp
 from seqeval.metrics import f1_score as cal_f1_seqeval
 from sklearn.metrics import f1_score as cal_f1_sklearn
 from transformers import get_linear_schedule_with_warmup, BertTokenizer
 from models import Bert_CRF
-from utils import NerDataset, PadBatch, get_all_labels
+from utils import NerDataset, PadBatch, get_all_labels, get_zh_labels
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -105,7 +103,8 @@ def demask(mask, labels, preds):
 
 def main(cfg):
     tokenizer = BertTokenizer.from_pretrained(cfg.model_name)
-    tag2idx, idx2tag = get_all_labels('data/conll/bio_type.txt')
+    # tag2idx, idx2tag = get_all_labels('data/conll/bio_type.txt')
+    tag2idx, idx2tag = get_zh_labels()
     train_set = NerDataset(osp.join(cfg.data_root, 'train.txt'), tag2idx, tokenizer)
     train_loader = DataLoader(dataset=train_set, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers, collate_fn=PadBatch)
     valid_set = NerDataset(osp.join(cfg.data_root, 'valid.txt'), tag2idx, tokenizer)
